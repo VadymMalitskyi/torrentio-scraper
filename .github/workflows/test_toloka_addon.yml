@@ -1,0 +1,31 @@
+name: Test Toloka Addon
+
+on:
+  pull_request:
+    paths:
+      - 'toloka-addon/**'
+      - '.github/workflows/test_toloka_addon.yml'
+  push:
+    branches: master
+    paths:
+      - 'toloka-addon/**'
+      - '.github/workflows/test_toloka_addon.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: toloka-addon
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: toloka-addon/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: docker build -t toloka-addon:test .

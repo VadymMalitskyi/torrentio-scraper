@@ -1,0 +1,27 @@
+{
+  "name": "stremio-toloka-torbox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/index.js",
+    "dev": "node --env-file-if-exists=.env --watch src/index.js",
+    "test": "node --test",
+    "check": "find src scripts test -name '*.js' -print0 | xargs -0 -n1 node --check",
+    "probe:login": "node --env-file-if-exists=.env scripts/probe-toloka-login.js",
+    "probe:cache": "node --env-file-if-exists=.env scripts/probe-torbox-cache.js",
+    "probe:seeding": "node --env-file-if-exists=.env scripts/probe-torbox-cache.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "p-limit": "^7.3.0",
+    "parse-torrent": "^11.0.21",
+    "tough-cookie": "^6.0.1",
+    "zod": "^4.4.3"
+  }
+}
