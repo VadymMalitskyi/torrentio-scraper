@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { toTorrentFile } from 'parse-torrent';
 import { parseStremioId } from '../../src/domain/stremio-id.js';
-import { buildSearchQueries } from '../../src/domain/release.js';
+import {
+  buildSearchQueries,
+  narrowTolokaCandidates,
+  scoreSeriesCandidateTitle,
+} from '../../src/domain/release.js';
 import { parseTorrentBytes } from '../../src/domain/torrent.js';
 import { matchesEpisode, selectVideoFiles } from '../../src/domain/video-match.js';
 
@@ -33,7 +37,7 @@ test('builds normalized fallback queries for title variants', () => {
   assert.deepEqual(buildSearchQueries({
     name: 'Hotel Transylvania 4: Transformania',
     releaseInfo: '2022',
-  }), [
+  }, { type: 'movie' }), [
     'Hotel Transylvania 4: Transformania 2022',
     'Hotel Transylvania 4 Transformania 2022',
     'Hotel Transylvania Transformania 2022',
@@ -41,6 +45,46 @@ test('builds normalized fallback queries for title variants', () => {
     'Hotel Transylvania 4: Transformania',
     'Hotel Transylvania 4 Transformania',
   ]);
+});
+
+test('builds yearless season-aware queries for series', () => {
+  assert.deepEqual(buildSearchQueries({
+    name: 'The Boys',
+    releaseInfo: '2019–2026',
+  }, {
+    type: 'series',
+    season: 5,
+    episode: 2,
+  }), [
+    'The Boys Season 5',
+    'The Boys',
+  ]);
+});
+
+test('scores exact episode titles above season packs and unrelated seasons', () => {
+  const exact = scoreSeriesCandidateTitle('The Boys S03E07 1080p', 3, 7);
+  const seasonPack = scoreSeriesCandidateTitle('The Boys Season 3 1080p', 3, 7);
+  const multiSeasonPack = scoreSeriesCandidateTitle('The Boys Seasons 1-3 1080p', 3, 7);
+  const otherSeason = scoreSeriesCandidateTitle('The Boys Season 1 1080p', 3, 7);
+
+  assert.ok(exact > seasonPack);
+  assert.ok(seasonPack > multiSeasonPack);
+  assert.ok(multiSeasonPack > otherSeason);
+});
+
+test('narrows series candidates to strong matches plus a small fallback set', () => {
+  const narrowed = narrowTolokaCandidates([
+    { topicId: 1, title: 'The Boys Seasons 1-3 1080p', seeds: 80 },
+    { topicId: 2, title: 'The Boys S03E07 1080p', seeds: 10 },
+    { topicId: 3, title: 'The Boys Season 3 1080p', seeds: 20 },
+    { topicId: 4, title: 'The Boys Season 1 1080p', seeds: 50 },
+  ], {
+    type: 'series',
+    season: 3,
+    episode: 7,
+  });
+
+  assert.deepEqual(narrowed.map((candidate) => candidate.topicId), [2, 3, 1, 4]);
 });
 
 test('matches common episode formats without numeric prefix collisions', () => {

@@ -35,3 +35,19 @@ test('production config still requires route and signing secrets', () => {
     /ADDON_SECRET.*SIGNING_SECRET/,
   );
 });
+
+test('production config applies conservative Toloka request budgets by default', () => {
+  const config = loadConfig({
+    ...tolokaEnvironment,
+    TORBOX_API_TOKEN: 'token',
+    ADDON_SECRET: 'a'.repeat(32),
+    SIGNING_SECRET: 'b'.repeat(32),
+  });
+  assert.equal(config.movieTopicFetchLimit, 3);
+  assert.equal(config.seriesTopicFetchLimit, 3);
+  assert.equal(config.movieTorrentDownloadLimit, 2);
+  assert.equal(config.seriesTorrentDownloadLimit, 2);
+  assert.equal(config.movieReleaseLimit, 1);
+  assert.equal(config.seriesReleaseLimit, 4);
+  assert.equal(config.seriesCandidateDelayMs, 750);
+});

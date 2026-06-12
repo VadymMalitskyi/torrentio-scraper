@@ -1,4 +1,4 @@
-export function buildSearchQueries(meta) {
+export function buildSearchQueries(meta, request = { type: 'movie' }) {
   const year = normalizeYear(meta.releaseInfo || meta.year || meta.released);
   const titles = [
     meta.name,
@@ -18,6 +18,11 @@ export function buildSearchQueries(meta) {
       uniqueTitles.push(title);
     }
   }
+
+  if (request.type === 'series') {
+    return buildSeriesQueries(uniqueTitles, request.season);
+  }
+
   const queries = [];
   for (const title of uniqueTitles.slice(0, 6)) {
     if (year) {
@@ -28,9 +33,47 @@ export function buildSearchQueries(meta) {
   return [...new Set(queries)];
 }
 
+export function narrowTolokaCandidates(candidates, request, { fallbackCount = 2 } = {}) {
+  if (request.type !== 'series') {
+    return candidates;
+  }
+
+  const scored = candidates.map((candidate, index) => ({
+    candidate,
+    index,
+    score: scoreSeriesCandidateTitle(candidate.title, request.season, request.episode),
+    seeds: Number(candidate.seeds || 0),
+  }));
+
+  scored.sort((left, right) => (
+    right.score - left.score
+    || right.seeds - left.seeds
+    || left.index - right.index
+  ));
+
+  const strong = scored.filter((item) => item.score > 0);
+  if (!strong.length) {
+    return scored.map((item) => item.candidate);
+  }
+
+  const fallback = scored.filter((item) => item.score <= 0).slice(0, fallbackCount);
+  return [...strong, ...fallback].map((item) => item.candidate);
+}
+
 function normalizeYear(value) {
   const match = String(value || '').match(/\b(19|20)\d{2}\b/);
   return match?.[0];
+}
+
+function buildSeriesQueries(titles, season) {
+  const queries = [];
+  for (const title of titles.slice(0, 4)) {
+    if (season) {
+      queries.push(`${title} Season ${season}`);
+    }
+    queries.push(title);
+  }
+  return [...new Set(queries)];
 }
 
 function titleVariants(title) {
@@ -74,4 +117,96 @@ function normalizeTitle(value) {
   return String(value || '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+export function scoreSeriesCandidateTitle(title, season, episode) {
+  const normalized = normalizeCandidateTitle(title);
+  let score = 0;
+
+  if (hasExplicitEpisodeMatch(normalized, season, episode)) {
+    score += 120;
+  }
+  if (hasSeasonMatch(normalized, season)) {
+    score += 30;
+  }
+  if (hasRequestedSeasonRange(normalized, season)) {
+    score += 15;
+  }
+  if (hasMultiSeasonPack(normalized)) {
+    score -= 20;
+  }
+  if (mentionsDifferentSeason(normalized, season)) {
+    score -= 15;
+  }
+  return score;
+}
+
+function normalizeCandidateTitle(title) {
+  return String(title || '')
+    .toLowerCase()
+    .replace(/[._]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function hasExplicitEpisodeMatch(title, season, episode) {
+  const patterns = [
+    new RegExp(`(?:^|\\D)s0*${season}\\s*e0*${episode}(?:\\D|$)`, 'i'),
+    new RegExp(`(?:^|\\D)0*${season}\\s*x\\s*0*${episode}(?:\\D|$)`, 'i'),
+  ];
+  return patterns.some((pattern) => pattern.test(title));
+}
+
+function hasSeasonMatch(title, season) {
+  const patterns = [
+    new RegExp(`(?:^|\\D)s(?:eason)?\\s*0*${season}(?:\\D|$)`, 'i'),
+    new RegExp(`(?:^|\\D)season\\s*0*${season}(?:\\D|$)`, 'i'),
+    new RegExp(`(?:^|\\D)seasons\\s*0*${season}(?:\\D|$)`, 'i'),
+    new RegExp(`(?:^|\\D)сезон\\s*0*${season}(?:\\D|$)`, 'i'),
+  ];
+  return patterns.some((pattern) => pattern.test(title));
+}
+
+function hasRequestedSeasonRange(title, season) {
+  return extractSeasonRanges(title).some(([start, end]) => season >= start && season <= end);
+}
+
+function hasMultiSeasonPack(title) {
+  return extractSeasonRanges(title).some(([start, end]) => end > start);
+}
+
+function mentionsDifferentSeason(title, season) {
+  const seasons = extractMentionedSeasons(title);
+  return seasons.length > 0 && !seasons.includes(season) && !hasRequestedSeasonRange(title, season);
+}
+
+function extractMentionedSeasons(title) {
+  const values = new Set();
+  const patterns = [
+    /\bs(?:eason)?\s*0*(\d{1,2})(?:\b|e)/gi,
+    /\bseasons?\s*0*(\d{1,2})\b/gi,
+    /\bсезон\s*0*(\d{1,2})\b/gi,
+    /\b(\d{1,2})x\d{1,2}\b/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of title.matchAll(pattern)) {
+      values.add(Number(match[1]));
+    }
+  }
+  return [...values];
+}
+
+function extractSeasonRanges(title) {
+  const ranges = [];
+  const patterns = [
+    /\bseasons?\s*0*(\d{1,2})\s*[-–—]\s*0*(\d{1,2})\b/gi,
+    /\bсезон(?:и)?\s*0*(\d{1,2})\s*[-–—]\s*0*(\d{1,2})\b/gi,
+    /\bs(?:eason)?\s*0*(\d{1,2})\s*[-–—]\s*0*(\d{1,2})\b/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of title.matchAll(pattern)) {
+      ranges.push([Number(match[1]), Number(match[2])]);
+    }
+  }
+  return ranges;
 }

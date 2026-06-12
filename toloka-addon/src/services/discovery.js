@@ -1,4 +1,4 @@
-import { buildSearchQueries } from '../domain/release.js';
+import { buildSearchQueries, narrowTolokaCandidates } from '../domain/release.js';
 import { selectVideoFiles } from '../domain/video-match.js';
 import { hasExactImdbMatch } from '../clients/toloka.js';
 import { matchTorBoxFile } from '../clients/torbox.js';
@@ -30,7 +30,7 @@ export function createDiscoveryService({
 
       const candidates = [];
       const seen = new Set();
-      for (const query of buildSearchQueries(meta)) {
+      for (const query of buildSearchQueries(meta, request)) {
         const results = await toloka.search(query);
         for (const candidate of results) {
           if (!seen.has(candidate.topicId)) {
@@ -38,14 +38,40 @@ export function createDiscoveryService({
             seen.add(candidate.topicId);
           }
         }
-        if (results.length > 0 || candidates.length >= config.maxSearchCandidates) {
+        const shouldStop = request.type === 'series'
+          ? candidates.length >= config.maxSearchCandidates
+          : results.length > 0 || candidates.length >= config.maxSearchCandidates;
+        if (shouldStop) {
           break;
         }
       }
 
+      const narrowedCandidates = narrowTolokaCandidates(
+        candidates.slice(0, config.maxSearchCandidates),
+        request,
+      );
+      const topicFetchLimit = request.type === 'series'
+        ? config.seriesTopicFetchLimit
+        : config.movieTopicFetchLimit;
+      const torrentDownloadLimit = request.type === 'series'
+        ? config.seriesTorrentDownloadLimit
+        : config.movieTorrentDownloadLimit;
+      const releaseLimit = request.type === 'series'
+        ? config.seriesReleaseLimit
+        : config.movieReleaseLimit;
+
       const releases = [];
-      for (const candidate of candidates.slice(0, config.maxSearchCandidates)) {
+      let topicFetches = 0;
+      let torrentDownloads = 0;
+      for (const candidate of narrowedCandidates) {
+        if (releases.length >= releaseLimit || topicFetches >= topicFetchLimit) {
+          break;
+        }
         try {
+          if (request.type === 'series' && topicFetches > 0 && config.seriesCandidateDelayMs > 0) {
+            await sleep(config.seriesCandidateDelayMs);
+          }
+          topicFetches += 1;
           const topic = await toloka.getTopic(candidate.url);
           if (!hasExactImdbMatch(topic, request.imdbId)) {
             continue;
@@ -55,6 +81,10 @@ export function createDiscoveryService({
           if (!attachment) {
             continue;
           }
+          if (torrentDownloads >= torrentDownloadLimit) {
+            break;
+          }
+          torrentDownloads += 1;
           const torrent = await toloka.downloadTorrent(attachment);
           torrentCache.set(torrent.infoHash, torrent, config.torrentCacheTtlMs);
           const cachedEntry = await torbox.getCachedEntry(torrent.infoHash);
@@ -94,6 +124,12 @@ export function createDiscoveryService({
       return releases;
     },
   };
+}
+
+function sleep(delayMs) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
 }
 
 function selectAttachment(attachments, candidate) {
