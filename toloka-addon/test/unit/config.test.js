@@ -50,5 +50,6 @@ test('production config applies conservative Toloka request budgets by default',
   assert.equal(config.seriesTorrentDownloadLimit, 5);
   assert.equal(config.movieReleaseLimit, 1);
   assert.equal(config.seriesReleaseLimit, 4);
+  assert.equal(config.movieCandidateDelayMs, 6000);
   assert.equal(config.seriesCandidateDelayMs, 750);
 });

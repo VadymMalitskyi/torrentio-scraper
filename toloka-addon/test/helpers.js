@@ -24,6 +24,7 @@ export function testConfig(overrides = {}) {
     seriesTorrentDownloadLimit: 5,
     movieReleaseLimit: 1,
     seriesReleaseLimit: 4,
+    movieCandidateDelayMs: 0,
     seriesCandidateDelayMs: 0,
     httpTimeoutMs: 15000,
     resolverTtlSeconds: 86400,

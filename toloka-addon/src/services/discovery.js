@@ -6,6 +6,7 @@ import { matchTorBoxFile } from '../clients/torbox.js';
 export function createDiscoveryService({
   config,
   cinemeta,
+  wikidata,
   toloka,
   searchCache,
   metadataCache,
@@ -25,6 +26,7 @@ export function createDiscoveryService({
       let meta = metadataCache.get(metadataKey);
       if (!meta) {
         meta = await cinemeta.getMeta(request.type, request.imdbId);
+        meta = await enrichMetadata(meta, request, wikidata, logger);
         metadataCache.set(metadataKey, meta, 24 * 60 * 60 * 1000);
       }
 
@@ -55,6 +57,9 @@ export function createDiscoveryService({
       const releaseLimit = request.type === 'series'
         ? config.seriesReleaseLimit
         : config.movieReleaseLimit;
+      const candidateDelayMs = request.type === 'series'
+        ? config.seriesCandidateDelayMs
+        : config.movieCandidateDelayMs;
 
       const releases = [];
       let topicFetches = 0;
@@ -64,8 +69,8 @@ export function createDiscoveryService({
           break;
         }
         try {
-          if (request.type === 'series' && topicFetches > 0 && config.seriesCandidateDelayMs > 0) {
-            await sleep(config.seriesCandidateDelayMs);
+          if (candidateDelayMs > 0 && (request.type !== 'series' || topicFetches > 0)) {
+            await sleep(candidateDelayMs);
           }
           topicFetches += 1;
           const topic = await toloka.getTopic(candidate.url);
@@ -120,6 +125,55 @@ export function createDiscoveryService({
       return releases;
     },
   };
+}
+
+async function enrichMetadata(meta, request, wikidata, logger) {
+  if (!wikidata || !needsAlternateTitleLookup(meta)) {
+    return meta;
+  }
+
+  try {
+    const titles = await wikidata.getTitlesByImdbId(request.imdbId);
+    if (!titles.length) {
+      return meta;
+    }
+
+    const existing = new Set(collectKnownTitles(meta).map((title) => title.toLocaleLowerCase()));
+    const aliases = [
+      ...(Array.isArray(meta.aliases) ? meta.aliases : []),
+      ...titles.filter((title) => !existing.has(title.toLocaleLowerCase())),
+    ];
+
+    return {
+      ...meta,
+      aliases,
+    };
+  } catch (error) {
+    logger.warn('Alternate title lookup failed', {
+      imdbId: request.imdbId,
+      errorName: error.name,
+      status: error.status,
+    });
+    return meta;
+  }
+}
+
+function needsAlternateTitleLookup(meta) {
+  return collectKnownTitles(meta).length < 2;
+}
+
+function collectKnownTitles(meta) {
+  return [
+    meta?.name,
+    meta?.originalName,
+    meta?.originalTitle,
+    ...(Array.isArray(meta?.aliases) ? meta.aliases : []),
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .filter((value, index, values) => (
+      values.findIndex((candidate) => candidate.toLocaleLowerCase() === value.toLocaleLowerCase()) === index
+    ));
 }
 
 function sleep(delayMs) {
