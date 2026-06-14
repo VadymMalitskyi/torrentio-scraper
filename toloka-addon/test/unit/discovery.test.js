@@ -423,6 +423,7 @@ test('narrows series candidates before fetching Toloka topics', async () => {
 });
 
 test('continues when a Toloka search query fails', async () => {
+  const searchCache = new MemoryCache({ maxWeight: 1000 });
   const queries = [];
   const service = createDiscoveryService({
     config: testConfig({ maxSearchCandidates: 1 }),
@@ -471,7 +472,7 @@ test('continues when a Toloka search query fails', async () => {
         return { hash: 'a'.repeat(40), files: [{ name: 'Movie.mkv', size: 1000 }] };
       },
     },
-    searchCache: new MemoryCache({ maxWeight: 1000 }),
+    searchCache,
     metadataCache: new MemoryCache({ maxWeight: 1000 }),
     torrentCache: new MemoryCache({ maxWeight: 1000, weigh: () => 1 }),
     logger: silentLogger,
@@ -487,6 +488,54 @@ test('continues when a Toloka search query fails', async () => {
     'In the Mood for Love 2000',
     'Fa yeung nin wah 2000',
   ]);
+  assert.equal(searchCache.get('movie:tt1234567')?.length, 1);
+});
+
+test('does not negative-cache an empty degraded discovery result', async () => {
+  const searchCache = new MemoryCache({ maxWeight: 1000 });
+  const service = createDiscoveryService({
+    config: testConfig(),
+    cinemeta: {
+      async getMeta() {
+        return {
+          name: 'In the Mood for Love',
+          originalTitle: 'Fa yeung nin wah',
+          releaseInfo: '2000',
+        };
+      },
+    },
+    wikidata: {
+      async getTitlesByImdbId() {
+        return [];
+      },
+    },
+    toloka: {
+      async search() {
+        const error = new Error('rate limited');
+        error.name = 'TolokaRequestError';
+        error.status = 429;
+        throw error;
+      },
+    },
+    torbox: {
+      async getCachedEntry() {
+        return undefined;
+      },
+    },
+    searchCache,
+    metadataCache: new MemoryCache({ maxWeight: 1000 }),
+    torrentCache: new MemoryCache({ maxWeight: 1000, weigh: () => 1 }),
+    logger: silentLogger,
+  });
+
+  const releases = await service.find({
+    type: 'movie',
+    imdbId: 'tt1234567',
+  });
+
+  assert.equal(releases.length, 0);
+  assert.equal(releases.degraded, true);
+  assert.equal(searchCache.get('movie:tt1234567'), undefined);
 });
 
 test('enriches sparse movie metadata with alternate titles before Toloka search', async () => {

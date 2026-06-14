@@ -37,6 +37,7 @@ export function createDiscoveryService({
 
       const candidates = [];
       const seen = new Set();
+      let degraded = false;
       const queries = buildSearchQueries(meta, request);
       const minQueriesBeforeStop = request.type === 'series' ? 3 : 2;
       logger.debug('Toloka queries prepared', {
@@ -48,6 +49,7 @@ export function createDiscoveryService({
         try {
           results = await toloka.search(query);
         } catch (error) {
+          degraded = degraded || isDegradedDiscoveryError(error);
           logger.warn('Toloka query failed', {
             ...requestContext(request),
             query,
@@ -199,6 +201,7 @@ export function createDiscoveryService({
             files: acceptedReleases.map((release) => release.path).slice(0, 5),
           });
         } catch (error) {
+          degraded = degraded || isDegradedDiscoveryError(error);
           logger.warn('Toloka candidate rejected', {
             topicId: candidate.topicId,
             errorName: error.name,
@@ -210,15 +213,21 @@ export function createDiscoveryService({
       const ttl = releases.length
         ? config.tolokaCacheTtlMs
         : config.tolokaNegativeCacheTtlMs;
-      searchCache.set(cacheKey, releases, ttl);
+      const response = degraded && !releases.length
+        ? markDegraded(releases)
+        : releases;
+      if (!(degraded && !releases.length)) {
+        searchCache.set(cacheKey, response, ttl);
+      }
       logger.debug('Discovery completed', {
         ...requestContext(request),
         releaseCount: releases.length,
         topicFetches,
         torrentDownloads,
+        degraded,
         cacheTtlMs: ttl,
       });
-      return releases;
+      return response;
     },
   };
 }
@@ -290,6 +299,22 @@ function summarizeCandidates(candidates) {
     title: candidate.title,
     seeds: candidate.seeds,
   }));
+}
+
+function isDegradedDiscoveryError(error) {
+  return [
+    'TolokaAuthenticationError',
+    'TolokaRequestError',
+    'DependencyError',
+  ].includes(error?.name);
+}
+
+function markDegraded(releases) {
+  Object.defineProperty(releases, 'degraded', {
+    value: true,
+    enumerable: false,
+  });
+  return releases;
 }
 
 function sleep(delayMs) {

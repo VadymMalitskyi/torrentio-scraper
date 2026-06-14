@@ -42,7 +42,9 @@ export function createStreamHandler({ config, discovery, logger }) {
       });
       res.set('Cache-Control', streams.length
         ? `public, max-age=${Math.floor(config.tolokaCacheTtlMs / 1000)}`
-        : `public, max-age=${Math.floor(config.tolokaNegativeCacheTtlMs / 1000)}`);
+        : releases.degraded
+          ? 'no-store'
+          : `public, max-age=${Math.floor(config.tolokaNegativeCacheTtlMs / 1000)}`);
       return res.json({ streams });
     } catch (error) {
       logger.error('Stream discovery failed', {
@@ -50,7 +52,7 @@ export function createStreamHandler({ config, discovery, logger }) {
         errorName: error.name,
       });
       res.set('Cache-Control', 'no-store');
-      return res.status(503).json({ streams: [] });
+      return res.json({ streams: [] });
     }
   };
 }
