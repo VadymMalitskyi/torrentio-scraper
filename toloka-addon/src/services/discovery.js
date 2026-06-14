@@ -29,18 +29,58 @@ export function createDiscoveryService({
         meta = await enrichMetadata(meta, request, wikidata, logger);
         metadataCache.set(metadataKey, meta, 24 * 60 * 60 * 1000);
       }
+      logger.debug('Discovery metadata ready', {
+        ...requestContext(request),
+        titles: collectKnownTitles(meta).slice(0, 8),
+        releaseInfo: meta.releaseInfo || meta.year || meta.released,
+      });
 
       const candidates = [];
       const seen = new Set();
-      for (const query of buildSearchQueries(meta, request)) {
-        const results = await toloka.search(query);
+      const queries = buildSearchQueries(meta, request);
+      const minQueriesBeforeStop = request.type === 'series' ? 3 : 2;
+      logger.debug('Toloka queries prepared', {
+        ...requestContext(request),
+        queries,
+      });
+      for (const [index, query] of queries.entries()) {
+        let results = [];
+        try {
+          results = await toloka.search(query);
+        } catch (error) {
+          logger.warn('Toloka query failed', {
+            ...requestContext(request),
+            query,
+            errorName: error.name,
+            status: error.status,
+          });
+          continue;
+        }
+        logger.debug('Toloka query completed', {
+          ...requestContext(request),
+          query,
+          resultCount: results.length,
+          topResults: summarizeCandidates(results),
+        });
         for (const candidate of results.slice(0, config.maxSearchResultsPerQuery)) {
           if (!seen.has(candidate.topicId)) {
             candidates.push(candidate);
             seen.add(candidate.topicId);
           }
         }
+        if (candidates.length >= config.maxSearchCandidates && index + 1 >= minQueriesBeforeStop) {
+          logger.debug('Toloka query loop stopped early', {
+            ...requestContext(request),
+            completedQueries: index + 1,
+            candidateCount: candidates.length,
+          });
+          break;
+        }
       }
+      logger.debug('Toloka candidates collected', {
+        ...requestContext(request),
+        candidateCount: candidates.length,
+      });
 
       const narrowedCandidates = narrowTolokaCandidates(
         candidates,
@@ -48,6 +88,11 @@ export function createDiscoveryService({
         meta,
         { limit: config.maxSearchCandidates },
       );
+      logger.debug('Toloka candidates narrowed', {
+        ...requestContext(request),
+        candidateCount: narrowedCandidates.length,
+        candidates: summarizeCandidates(narrowedCandidates),
+      });
       const topicFetchLimit = request.type === 'series'
         ? config.seriesTopicFetchLimit
         : config.movieTopicFetchLimit;
@@ -73,13 +118,32 @@ export function createDiscoveryService({
             await sleep(candidateDelayMs);
           }
           topicFetches += 1;
+          logger.debug('Toloka topic fetch started', {
+            ...requestContext(request),
+            topicId: candidate.topicId,
+            title: candidate.title,
+            topicFetches,
+          });
           const topic = await toloka.getTopic(candidate.url);
           if (!hasExactImdbMatch(topic, request.imdbId)) {
+            logger.debug('Toloka candidate skipped', {
+              ...requestContext(request),
+              topicId: candidate.topicId,
+              title: candidate.title,
+              reason: 'imdb_mismatch',
+              imdbIds: topic.imdbIds,
+            });
             continue;
           }
           const attachment = selectAttachment(topic.attachments, candidate)
             || (candidate.attachmentId && toloka.attachmentForId(candidate.attachmentId));
           if (!attachment) {
+            logger.debug('Toloka candidate skipped', {
+              ...requestContext(request),
+              topicId: candidate.topicId,
+              title: candidate.title,
+              reason: 'missing_attachment',
+            });
             continue;
           }
           if (torrentDownloads >= torrentDownloadLimit) {
@@ -90,25 +154,50 @@ export function createDiscoveryService({
           torrentCache.set(torrent.infoHash, torrent, config.torrentCacheTtlMs);
           const cachedEntry = await torbox.getCachedEntry(torrent.infoHash);
           if (!cachedEntry) {
+            logger.debug('Toloka candidate skipped', {
+              ...requestContext(request),
+              topicId: candidate.topicId,
+              title: candidate.title,
+              reason: 'torbox_uncached',
+              infoHash: torrent.infoHash,
+            });
             continue;
           }
-          releases.push(
-            ...selectVideoFiles(torrent.files, request, {
-              minVideoBytes: config.minVideoBytes,
-            })
-              .filter((file) => matchTorBoxFile(cachedEntry.files || [], file.path, file.size))
-              .map((file) => ({
-                topicId: candidate.topicId,
-                attachmentId: attachment.id,
-                infoHash: torrent.infoHash,
-                torrentName: torrent.name,
-                path: file.path,
-                size: file.size,
-                releaseTitle: candidate.title || topic.title || torrent.name,
-                seeds: candidate.seeds,
-                leeches: candidate.leeches,
-              })),
-          );
+          const selectedFiles = selectVideoFiles(torrent.files, request, {
+            minVideoBytes: config.minVideoBytes,
+          });
+          const matchedFiles = selectedFiles
+            .filter((file) => matchTorBoxFile(cachedEntry.files || [], file.path, file.size));
+          if (!matchedFiles.length) {
+            logger.debug('Toloka candidate skipped', {
+              ...requestContext(request),
+              topicId: candidate.topicId,
+              title: candidate.title,
+              reason: 'no_matching_files',
+              selectedFiles: selectedFiles.map((file) => file.path).slice(0, 5),
+            });
+            continue;
+          }
+          const acceptedReleases = matchedFiles.map((file) => ({
+            topicId: candidate.topicId,
+            attachmentId: attachment.id,
+            infoHash: torrent.infoHash,
+            torrentName: torrent.name,
+            path: file.path,
+            size: file.size,
+            releaseTitle: candidate.title || topic.title || torrent.name,
+            seeds: candidate.seeds,
+            leeches: candidate.leeches,
+          }));
+          releases.push(...acceptedReleases);
+          logger.debug('Toloka candidate accepted', {
+            ...requestContext(request),
+            topicId: candidate.topicId,
+            title: candidate.title,
+            infoHash: torrent.infoHash,
+            releaseCount: acceptedReleases.length,
+            files: acceptedReleases.map((release) => release.path).slice(0, 5),
+          });
         } catch (error) {
           logger.warn('Toloka candidate rejected', {
             topicId: candidate.topicId,
@@ -122,6 +211,13 @@ export function createDiscoveryService({
         ? config.tolokaCacheTtlMs
         : config.tolokaNegativeCacheTtlMs;
       searchCache.set(cacheKey, releases, ttl);
+      logger.debug('Discovery completed', {
+        ...requestContext(request),
+        releaseCount: releases.length,
+        topicFetches,
+        torrentDownloads,
+        cacheTtlMs: ttl,
+      });
       return releases;
     },
   };
@@ -135,6 +231,7 @@ async function enrichMetadata(meta, request, wikidata, logger) {
   try {
     const titles = await wikidata.getTitlesByImdbId(request.imdbId);
     if (!titles.length) {
+      logger.debug('Alternate title lookup returned no titles', requestContext(request));
       return meta;
     }
 
@@ -174,6 +271,25 @@ function collectKnownTitles(meta) {
     .filter((value, index, values) => (
       values.findIndex((candidate) => candidate.toLocaleLowerCase() === value.toLocaleLowerCase()) === index
     ));
+}
+
+function requestContext(request) {
+  return {
+    imdbId: request.imdbId,
+    type: request.type,
+    ...(request.type === 'series' && {
+      season: request.season,
+      episode: request.episode,
+    }),
+  };
+}
+
+function summarizeCandidates(candidates) {
+  return candidates.slice(0, 5).map((candidate) => ({
+    topicId: candidate.topicId,
+    title: candidate.title,
+    seeds: candidate.seeds,
+  }));
 }
 
 function sleep(delayMs) {

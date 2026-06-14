@@ -43,8 +43,8 @@ test('production config applies conservative Toloka request budgets by default',
     ADDON_SECRET: 'a'.repeat(32),
     SIGNING_SECRET: 'b'.repeat(32),
   });
-  assert.equal(config.movieTopicFetchLimit, 3);
-  assert.equal(config.seriesTopicFetchLimit, 5);
+  assert.equal(config.movieTopicFetchLimit, 2);
+  assert.equal(config.seriesTopicFetchLimit, 3);
   assert.equal(config.maxSearchResultsPerQuery, 25);
   assert.equal(config.movieTorrentDownloadLimit, 5);
   assert.equal(config.seriesTorrentDownloadLimit, 5);

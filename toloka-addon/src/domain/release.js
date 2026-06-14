@@ -6,12 +6,12 @@ export function buildSearchQueries(meta, request = { type: 'movie' }) {
   }
 
   const queries = [];
-  for (const title of context.titles.slice(0, 6)) {
+  for (const title of context.titles.slice(0, 4)) {
     if (context.year) {
       queries.push(`${title} ${context.year}`);
     }
   }
-  queries.push(...context.titles.slice(0, 4));
+  queries.push(...context.titles.slice(0, 2));
   return [...new Set(queries)];
 }
 

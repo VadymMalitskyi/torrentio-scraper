@@ -44,8 +44,6 @@ test('builds normalized fallback queries for title variants', () => {
     'Transformania 2022',
     'Hotel Transylvania 4: Transformania',
     'Hotel Transylvania 4 Transformania',
-    'Hotel Transylvania Transformania',
-    'Transformania',
   ]);
 });
 

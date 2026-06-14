@@ -163,8 +163,6 @@ test('continues movie search past the first non-empty query to gather stronger c
   assert.deepEqual(queries, [
     'In the Mood for Love 2000',
     'Fa yeung nin wah 2000',
-    'In the Mood for Love',
-    'Fa yeung nin wah',
   ]);
 });
 
@@ -421,7 +419,73 @@ test('narrows series candidates before fetching Toloka topics', async () => {
     'https://toloka.test/t2',
     'https://toloka.test/t3',
     'https://toloka.test/t1',
-    'https://toloka.test/t4',
+  ]);
+});
+
+test('continues when a Toloka search query fails', async () => {
+  const queries = [];
+  const service = createDiscoveryService({
+    config: testConfig({ maxSearchCandidates: 1 }),
+    cinemeta: {
+      async getMeta() {
+        return {
+          name: 'In the Mood for Love',
+          originalTitle: 'Fa yeung nin wah',
+          releaseInfo: '2000',
+        };
+      },
+    },
+    wikidata: {
+      async getTitlesByImdbId() {
+        return [];
+      },
+    },
+    toloka: {
+      async search(query) {
+        queries.push(query);
+        if (query === 'In the Mood for Love 2000') {
+          const error = new Error('rate limited');
+          error.name = 'TolokaRequestError';
+          error.status = 429;
+          throw error;
+        }
+        if (query === 'Fa yeung nin wah 2000') {
+          return [{ topicId: 2, url: 'https://toloka.test/t2', title: 'Fa yeung nin wah 2000', attachmentId: 3 }];
+        }
+        return [];
+      },
+      async getTopic() {
+        return { imdbIds: ['tt1234567'], attachments: [{ id: 3, url: 'https://toloka.test/dl.php?id=3' }] };
+      },
+      async downloadTorrent() {
+        return {
+          infoHash: 'a'.repeat(40),
+          name: 'Movie',
+          bytes: Buffer.from('torrent'),
+          files: [{ path: 'Movie.mkv', size: 1000 }],
+        };
+      },
+    },
+    torbox: {
+      async getCachedEntry() {
+        return { hash: 'a'.repeat(40), files: [{ name: 'Movie.mkv', size: 1000 }] };
+      },
+    },
+    searchCache: new MemoryCache({ maxWeight: 1000 }),
+    metadataCache: new MemoryCache({ maxWeight: 1000 }),
+    torrentCache: new MemoryCache({ maxWeight: 1000, weigh: () => 1 }),
+    logger: silentLogger,
+  });
+
+  const releases = await service.find({
+    type: 'movie',
+    imdbId: 'tt1234567',
+  });
+
+  assert.equal(releases.length, 1);
+  assert.deepEqual(queries, [
+    'In the Mood for Love 2000',
+    'Fa yeung nin wah 2000',
   ]);
 });
 
