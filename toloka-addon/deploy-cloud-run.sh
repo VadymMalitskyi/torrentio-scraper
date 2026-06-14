@@ -24,6 +24,6 @@ gcloud run deploy "${CLOUD_RUN_SERVICE}" \
   --memory 256Mi \
   --min 0 \
   --max 1 \
-  --concurrency 4 \
+  --concurrency 1 \
   --timeout 60 \
   --set-secrets "TOLOKA_USERNAME=toloka-username:latest,TOLOKA_PASSWORD=toloka-password:latest,TORBOX_API_TOKEN=torbox-api-token:latest,ADDON_SECRET=addon-secret:latest,SIGNING_SECRET=signing-secret:latest"

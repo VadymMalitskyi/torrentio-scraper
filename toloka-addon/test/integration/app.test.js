@@ -67,3 +67,58 @@ test('serves protected manifest and signed stream URLs', async (t) => {
   assert.equal(resolveResponse.status, 302);
   assert.equal(resolveResponse.headers.get('location'), 'https://cdn.example/video');
 });
+
+test('returns non-cacheable empty streams when discovery fails', async (t) => {
+  const config = testConfig();
+  const app = createApp(config, {
+    logger: silentLogger,
+    dependencies: {
+      discovery: {
+        async find() {
+          const error = new Error('upstream failed');
+          error.name = 'TolokaRequestError';
+          throw error;
+        },
+      },
+    },
+  });
+  const server = app.listen(0, '127.0.0.1');
+  t.after(() => server.close());
+  await new Promise((resolve) => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  const response = await fetch(`${base}/${config.addonSecret}/stream/movie/tt0111161.json`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await response.json(), { streams: [] });
+});
+
+test('returns non-cacheable empty streams for degraded discovery results', async (t) => {
+  const config = testConfig();
+  const app = createApp(config, {
+    logger: silentLogger,
+    dependencies: {
+      discovery: {
+        async find() {
+          const releases = [];
+          Object.defineProperty(releases, 'degraded', {
+            value: true,
+            enumerable: false,
+          });
+          return releases;
+        },
+      },
+    },
+  });
+  const server = app.listen(0, '127.0.0.1');
+  t.after(() => server.close());
+  await new Promise((resolve) => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  const response = await fetch(`${base}/${config.addonSecret}/stream/movie/tt0111161.json`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await response.json(), { streams: [] });
+});

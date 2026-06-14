@@ -5,6 +5,7 @@ import { MemoryCache } from './cache/memory-cache.js';
 import { CinemetaClient } from './clients/cinemeta.js';
 import { TolokaClient } from './clients/toloka.js';
 import { TorBoxClient } from './clients/torbox.js';
+import { WikidataClient } from './clients/wikidata.js';
 import { createDiscoveryService } from './services/discovery.js';
 import { createPlaybackService } from './services/playback.js';
 import { createCacheClearHandler } from './routes/cache.js';
@@ -44,6 +45,9 @@ export function createApp(config, { logger, dependencies = {} }) {
     baseUrl: config.cinemetaBaseUrl,
     timeoutMs: config.httpTimeoutMs,
   });
+  const wikidata = dependencies.wikidata || new WikidataClient({
+    timeoutMs: config.httpTimeoutMs,
+  });
   const toloka = dependencies.toloka || new TolokaClient({
     baseUrl: config.tolokaBaseUrl,
     username: config.tolokaUsername,
@@ -60,6 +64,7 @@ export function createApp(config, { logger, dependencies = {} }) {
   const discovery = dependencies.discovery || createDiscoveryService({
     config,
     cinemeta,
+    wikidata,
     toloka,
     torbox,
     searchCache,
