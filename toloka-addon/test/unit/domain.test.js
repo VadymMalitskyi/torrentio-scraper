@@ -44,10 +44,12 @@ test('builds normalized fallback queries for title variants', () => {
     'Transformania 2022',
     'Hotel Transylvania 4: Transformania',
     'Hotel Transylvania 4 Transformania',
+    'Hotel Transylvania Transformania',
+    'Transformania',
   ]);
 });
 
-test('builds yearless season-aware queries for series', () => {
+test('builds broad season and year-aware queries for series', () => {
   assert.deepEqual(buildSearchQueries({
     name: 'The Boys',
     releaseInfo: '2019–2026',
@@ -57,6 +59,7 @@ test('builds yearless season-aware queries for series', () => {
     episode: 2,
   }), [
     'The Boys Season 5',
+    'The Boys 2019',
     'The Boys',
   ]);
 });
@@ -82,6 +85,9 @@ test('narrows series candidates to strong matches plus a small fallback set', ()
     type: 'series',
     season: 3,
     episode: 7,
+  }, {
+    name: 'The Boys',
+    releaseInfo: '2019',
   });
 
   assert.deepEqual(narrowed.map((candidate) => candidate.topicId), [2, 3, 1, 4]);

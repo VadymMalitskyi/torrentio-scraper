@@ -89,30 +89,40 @@ test('drops uncached Toloka releases', async () => {
   assert.equal(releases.length, 0);
 });
 
-test('stops searching after the first query that returns candidates', async () => {
+test('continues movie search past the first non-empty query to gather stronger candidates', async () => {
   const queries = [];
   const service = createDiscoveryService({
-    config: testConfig(),
+    config: testConfig({ maxSearchCandidates: 2 }),
     cinemeta: {
       async getMeta() {
-        return { name: 'Hotel Transylvania 4: Transformania', releaseInfo: '2022' };
+        return {
+          name: 'In the Mood for Love',
+          originalTitle: 'Fa yeung nin wah',
+          releaseInfo: '2000',
+        };
       },
     },
     toloka: {
       async search(query) {
         queries.push(query);
-        if (query === 'Hotel Transylvania Transformania 2022') {
-          return [{ topicId: 1, url: 'https://toloka.test/t1', title: 'Movie 2022', attachmentId: 2 }];
+        if (query === 'In the Mood for Love 2000') {
+          return [{ topicId: 1, url: 'https://toloka.test/t1', title: 'Wrong Movie 2000', attachmentId: 2 }];
+        }
+        if (query === 'Fa yeung nin wah 2000') {
+          return [{ topicId: 2, url: 'https://toloka.test/t2', title: 'Fa yeung nin wah 2000', attachmentId: 3 }];
         }
         return [];
       },
-      async getTopic() {
-        return { imdbIds: ['tt1234567'], attachments: [{ id: 2, url: 'https://toloka.test/dl.php?id=2' }] };
+      async getTopic(url) {
+        if (url.endsWith('/t1')) {
+          return { imdbIds: ['tt7654321'], attachments: [{ id: 2, url: 'https://toloka.test/dl.php?id=2' }] };
+        }
+        return { imdbIds: ['tt1234567'], attachments: [{ id: 3, url: 'https://toloka.test/dl.php?id=3' }] };
       },
-      async downloadTorrent() {
+      async downloadTorrent(attachment) {
         return {
           infoHash: 'a'.repeat(40),
-          name: 'Movie',
+          name: attachment.id === 3 ? 'Fa yeung nin wah' : 'Wrong Movie',
           bytes: Buffer.from('torrent'),
           files: [{ path: 'Movie.mkv', size: 1000 }],
         };
@@ -134,10 +144,12 @@ test('stops searching after the first query that returns candidates', async () =
     imdbId: 'tt1234567',
   });
   assert.equal(releases.length, 1);
+  assert.equal(releases[0].topicId, 2);
   assert.deepEqual(queries, [
-    'Hotel Transylvania 4: Transformania 2022',
-    'Hotel Transylvania 4 Transformania 2022',
-    'Hotel Transylvania Transformania 2022',
+    'In the Mood for Love 2000',
+    'Fa yeung nin wah 2000',
+    'In the Mood for Love',
+    'Fa yeung nin wah',
   ]);
 });
 
@@ -196,8 +208,72 @@ test('series discovery continues past the first non-empty query to gather better
   assert.equal(releases.length, 2);
   assert.deepEqual(queries, [
     'The Boys Season 5',
+    'The Boys 2019',
     'The Boys',
   ]);
+});
+
+test('keeps deeper results from each query before final ranking', async () => {
+  const service = createDiscoveryService({
+    config: testConfig({
+      maxSearchCandidates: 1,
+      maxSearchResultsPerQuery: 15,
+      movieTopicFetchLimit: 1,
+    }),
+    cinemeta: {
+      async getMeta() {
+        return {
+          name: 'In the Mood for Love',
+          originalTitle: 'Fa yeung nin wah',
+          releaseInfo: '2000',
+        };
+      },
+    },
+    toloka: {
+      async search(query) {
+        if (query !== 'Fa yeung nin wah 2000') {
+          return [];
+        }
+        return Array.from({ length: 12 }, (_, index) => ({
+          topicId: index + 1,
+          url: `https://toloka.test/t${index + 1}`,
+          title: index === 11 ? 'Fa yeung nin wah 2000' : `Noise title ${index + 1}`,
+          attachmentId: index + 101,
+        }));
+      },
+      async getTopic(url) {
+        return {
+          imdbIds: [url.endsWith('/t12') ? 'tt1234567' : 'tt7654321'],
+          attachments: [{ id: 112, url: 'https://toloka.test/dl.php?id=112' }],
+        };
+      },
+      async downloadTorrent() {
+        return {
+          infoHash: 'a'.repeat(40),
+          name: 'Movie',
+          bytes: Buffer.from('torrent'),
+          files: [{ path: 'Movie.mkv', size: 1000 }],
+        };
+      },
+    },
+    torbox: {
+      async getCachedEntry() {
+        return { hash: 'a'.repeat(40), files: [{ name: 'Movie.mkv', size: 1000 }] };
+      },
+    },
+    searchCache: new MemoryCache({ maxWeight: 1000 }),
+    metadataCache: new MemoryCache({ maxWeight: 1000 }),
+    torrentCache: new MemoryCache({ maxWeight: 1000, weigh: () => 1 }),
+    logger: silentLogger,
+  });
+
+  const releases = await service.find({
+    type: 'movie',
+    imdbId: 'tt1234567',
+  });
+
+  assert.equal(releases.length, 1);
+  assert.equal(releases[0].topicId, 12);
 });
 
 test('continues sequential candidate processing after a transient Toloka failure', async () => {
@@ -310,6 +386,7 @@ test('narrows series candidates before fetching Toloka topics', async () => {
     'https://toloka.test/t2',
     'https://toloka.test/t3',
     'https://toloka.test/t1',
+    'https://toloka.test/t4',
   ]);
 });
 

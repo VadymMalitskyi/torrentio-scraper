@@ -32,23 +32,19 @@ export function createDiscoveryService({
       const seen = new Set();
       for (const query of buildSearchQueries(meta, request)) {
         const results = await toloka.search(query);
-        for (const candidate of results) {
+        for (const candidate of results.slice(0, config.maxSearchResultsPerQuery)) {
           if (!seen.has(candidate.topicId)) {
             candidates.push(candidate);
             seen.add(candidate.topicId);
           }
         }
-        const shouldStop = request.type === 'series'
-          ? candidates.length >= config.maxSearchCandidates
-          : results.length > 0 || candidates.length >= config.maxSearchCandidates;
-        if (shouldStop) {
-          break;
-        }
       }
 
       const narrowedCandidates = narrowTolokaCandidates(
-        candidates.slice(0, config.maxSearchCandidates),
+        candidates,
         request,
+        meta,
+        { limit: config.maxSearchCandidates },
       );
       const topicFetchLimit = request.type === 'series'
         ? config.seriesTopicFetchLimit

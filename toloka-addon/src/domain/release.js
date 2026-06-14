@@ -1,5 +1,59 @@
 export function buildSearchQueries(meta, request = { type: 'movie' }) {
-  const year = normalizeYear(meta.releaseInfo || meta.year || meta.released);
+  const context = buildTitleContext(meta);
+
+  if (request.type === 'series') {
+    return buildSeriesQueries(context.titles, request.season, request.episode, context.year);
+  }
+
+  const queries = [];
+  for (const title of context.titles.slice(0, 6)) {
+    if (context.year) {
+      queries.push(`${title} ${context.year}`);
+    }
+  }
+  queries.push(...context.titles.slice(0, 4));
+  return [...new Set(queries)];
+}
+
+export function narrowTolokaCandidates(
+  candidates,
+  request,
+  meta = {},
+  { fallbackCount = 2, limit = candidates.length } = {},
+) {
+  const context = buildTitleContext(meta);
+  const scored = candidates.map((candidate, index) => ({
+    candidate,
+    index,
+    score: scoreCandidateTitle(candidate.title, request, context),
+    seeds: Number(candidate.seeds || 0),
+  }));
+
+  scored.sort((left, right) => (
+    right.score - left.score
+    || right.seeds - left.seeds
+    || left.index - right.index
+  ));
+
+  if (request.type !== 'series') {
+    return scored.slice(0, limit).map((item) => item.candidate);
+  }
+
+  const strong = scored.filter((item) => item.score > 0);
+  if (!strong.length) {
+    return scored.slice(0, limit).map((item) => item.candidate);
+  }
+
+  const fallback = scored.filter((item) => item.score <= 0).slice(0, fallbackCount);
+  return [...strong, ...fallback].slice(0, limit).map((item) => item.candidate);
+}
+
+function normalizeYear(value) {
+  const match = String(value || '').match(/\b(19|20)\d{2}\b/);
+  return match?.[0];
+}
+
+function buildTitleContext(meta = {}) {
   const titles = [
     meta.name,
     meta.originalName,
@@ -19,57 +73,21 @@ export function buildSearchQueries(meta, request = { type: 'movie' }) {
     }
   }
 
-  if (request.type === 'series') {
-    return buildSeriesQueries(uniqueTitles, request.season);
-  }
-
-  const queries = [];
-  for (const title of uniqueTitles.slice(0, 6)) {
-    if (year) {
-      queries.push(`${title} ${year}`);
-    }
-  }
-  queries.push(...uniqueTitles.slice(0, 2));
-  return [...new Set(queries)];
+  return {
+    titles: uniqueTitles,
+    normalizedTitles: uniqueTitles.map((title) => normalizeCandidateTitle(title)).filter(Boolean),
+    year: normalizeYear(meta.releaseInfo || meta.year || meta.released),
+  };
 }
 
-export function narrowTolokaCandidates(candidates, request, { fallbackCount = 2 } = {}) {
-  if (request.type !== 'series') {
-    return candidates;
-  }
-
-  const scored = candidates.map((candidate, index) => ({
-    candidate,
-    index,
-    score: scoreSeriesCandidateTitle(candidate.title, request.season, request.episode),
-    seeds: Number(candidate.seeds || 0),
-  }));
-
-  scored.sort((left, right) => (
-    right.score - left.score
-    || right.seeds - left.seeds
-    || left.index - right.index
-  ));
-
-  const strong = scored.filter((item) => item.score > 0);
-  if (!strong.length) {
-    return scored.map((item) => item.candidate);
-  }
-
-  const fallback = scored.filter((item) => item.score <= 0).slice(0, fallbackCount);
-  return [...strong, ...fallback].map((item) => item.candidate);
-}
-
-function normalizeYear(value) {
-  const match = String(value || '').match(/\b(19|20)\d{2}\b/);
-  return match?.[0];
-}
-
-function buildSeriesQueries(titles, season) {
+function buildSeriesQueries(titles, season, episode, year) {
   const queries = [];
   for (const title of titles.slice(0, 4)) {
     if (season) {
       queries.push(`${title} Season ${season}`);
+    }
+    if (year) {
+      queries.push(`${title} ${year}`);
     }
     queries.push(title);
   }
@@ -141,12 +159,72 @@ export function scoreSeriesCandidateTitle(title, season, episode) {
   return score;
 }
 
+function scoreCandidateTitle(title, request, context) {
+  let score = scoreTitleMatch(title, context.normalizedTitles);
+  score += scoreYearMatch(title, context.year);
+  if (request.type === 'series') {
+    score += scoreSeriesCandidateTitle(title, request.season, request.episode);
+  }
+  return score;
+}
+
 function normalizeCandidateTitle(title) {
   return String(title || '')
     .toLowerCase()
     .replace(/[._]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function scoreTitleMatch(title, normalizedTitles) {
+  const normalizedCandidate = normalizeCandidateTitle(title);
+  let best = 0;
+
+  for (const normalizedTitle of normalizedTitles) {
+    if (!normalizedTitle) {
+      continue;
+    }
+    if (normalizedCandidate === normalizedTitle) {
+      best = Math.max(best, 80);
+      continue;
+    }
+    if (containsWholePhrase(normalizedCandidate, normalizedTitle)) {
+      best = Math.max(best, 60);
+      continue;
+    }
+
+    const tokens = significantTokens(normalizedTitle);
+    if (!tokens.length) {
+      continue;
+    }
+    const matched = tokens.filter((token) => containsWholePhrase(normalizedCandidate, token)).length;
+    if (matched === tokens.length) {
+      best = Math.max(best, 45 + tokens.length * 5);
+    } else if (matched >= Math.ceil(tokens.length * 0.6)) {
+      best = Math.max(best, 20 + matched * 5);
+    }
+  }
+
+  return best;
+}
+
+function scoreYearMatch(title, year) {
+  if (!year) {
+    return 0;
+  }
+  const candidateYear = normalizeYear(title);
+  if (!candidateYear) {
+    return 0;
+  }
+  return candidateYear === year ? 15 : -10;
+}
+
+function significantTokens(title) {
+  return title.split(' ').filter((token) => token.length >= 3 && !/^\d+$/.test(token));
+}
+
+function containsWholePhrase(text, phrase) {
+  return new RegExp(`(?:^|\\b)${escapeRegExp(phrase)}(?:\\b|$)`, 'i').test(text);
 }
 
 function hasExplicitEpisodeMatch(title, season, episode) {
@@ -209,4 +287,8 @@ function extractSeasonRanges(title) {
     }
   }
   return ranges;
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
