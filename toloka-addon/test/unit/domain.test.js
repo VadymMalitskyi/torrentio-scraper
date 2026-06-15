@@ -56,7 +56,7 @@ test('builds broad season and year-aware queries for series', () => {
     season: 5,
     episode: 2,
   }), [
-    'The Boys Season 5',
+    'The Boys сезон 5',
     'The Boys 2019',
     'The Boys',
   ]);

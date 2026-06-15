@@ -183,8 +183,8 @@ test('series discovery continues past the first non-empty query to gather better
     toloka: {
       async search(query) {
         queries.push(query);
-        if (query === 'The Boys Season 5') {
-          return [{ topicId: 1, url: 'https://toloka.test/t1', title: 'The Boys Season 5', attachmentId: 2 }];
+        if (query === 'The Boys сезон 5') {
+          return [{ topicId: 1, url: 'https://toloka.test/t1', title: 'The Boys сезон 5', attachmentId: 2 }];
         }
         if (query === 'The Boys') {
           return [{ topicId: 2, url: 'https://toloka.test/t2', title: 'The Boys S05E02', attachmentId: 3 }];
@@ -225,7 +225,7 @@ test('series discovery continues past the first non-empty query to gather better
   });
   assert.equal(releases.length, 2);
   assert.deepEqual(queries, [
-    'The Boys Season 5',
+    'The Boys сезон 5',
     'The Boys 2019',
     'The Boys',
   ]);
