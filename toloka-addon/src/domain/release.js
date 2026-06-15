@@ -84,7 +84,7 @@ function buildSeriesQueries(titles, season, episode, year) {
   const queries = [];
   for (const title of titles.slice(0, 4)) {
     if (season) {
-      queries.push(`${title} Season ${season}`);
+      queries.push(`${title} сезон ${season}`);
     }
     if (year) {
       queries.push(`${title} ${year}`);
